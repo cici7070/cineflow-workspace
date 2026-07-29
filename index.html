@@ -498,6 +498,24 @@
   </div>
 </div>
 
+<!-- ============== MODAL: COLUMN PICKER ============== -->
+<div id="columnPickerModal" class="fixed inset-0 z-50 hidden items-center justify-center modal-back p-0 md:p-4">
+  <div class="card modal-card-mobile w-full max-w-md reveal">
+    <div class="p-5 border-b border-ink-700 flex items-center justify-between">
+      <div>
+        <div class="display text-xl text-white flex items-center gap-2"><i data-lucide="columns-3" class="w-5 h-5 text-amber-glow"></i>欄位設定</div>
+        <div class="mono text-[10px] text-ink-500 mt-0.5">勾選顯示的欄位，用上下鍵排序</div>
+      </div>
+      <button onclick="closeColumnPicker()" class="text-ink-500 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+    </div>
+    <div id="columnPickerBody" class="p-4 space-y-2 max-h-[60vh] overflow-y-auto scroll-thin"></div>
+    <div class="p-4 border-t border-ink-700 flex items-center justify-between">
+      <button class="btn-ghost text-xs" onclick="resetColumns()"><i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>重置為預設</button>
+      <button class="btn-primary" onclick="closeColumnPicker()"><i data-lucide="check" class="w-4 h-4"></i>完成</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============== JS ============== -->
 <script>
 /* ============================================================
@@ -529,6 +547,20 @@ const DEFAULT_CHECKLIST = [
   '客戶一輪回饋',
   '終版 4K + 1080p 雙版本輸出'
 ];
+
+/* ---------- Table Column Definitions ---------- */
+const COLUMN_DEFS = [
+  { key:'title',     label:'項目',  defaultOn:true,  align:'left' },
+  { key:'client',    label:'業主',  defaultOn:true,  align:'left' },
+  { key:'status',    label:'狀態',  defaultOn:true,  align:'left' },
+  { key:'type',      label:'類型',  defaultOn:true,  align:'left' },
+  { key:'amount',    label:'金額',  defaultOn:true,  align:'right' },
+  { key:'payment',   label:'付款',  defaultOn:true,  align:'left' },
+  { key:'deadline',  label:'截止',  defaultOn:true,  align:'left' },
+  { key:'revisions', label:'修改',  defaultOn:true,  align:'left' },
+  { key:'tags',      label:'標籤',  defaultOn:false, align:'left' }
+];
+const DEFAULT_TABLE_COLS = COLUMN_DEFS.filter(c=>c.defaultOn).map(c=>c.key);
 
 /* ---------- State ---------- */
 let state = loadState() || seedState();
@@ -859,6 +891,7 @@ function viewProjects(){
   const ps = state.projects;
   const total = ps.length;
   const active = ps.filter(p=>!['done'].includes(p.status)).length;
+  const groupBy = state.listGroupBy || 'none';
   return `
   <div class="reveal space-y-4">
     <div class="card p-4 flex flex-wrap items-center gap-3">
@@ -873,16 +906,31 @@ function viewProjects(){
         <option value="all">全部狀態</option>
         ${Object.entries(STATUS_META).map(([k,v])=>`<option value="${k}">${v.label}</option>`).join('')}
       </select>
+      ${projectsView==='list' ? `
+      <select class="input max-w-[160px]" id="projectGroupBy" onchange="setListGroupBy(this.value)" title="分群">
+        <option value="none" ${groupBy==='none'?'selected':''}>不分群</option>
+        <option value="status" ${groupBy==='status'?'selected':''}>按狀態分群</option>
+        <option value="client" ${groupBy==='client'?'selected':''}>按業主分群</option>
+        <option value="type" ${groupBy==='type'?'selected':''}>按類型分群</option>
+        <option value="payment" ${groupBy==='payment'?'selected':''}>按付款分群</option>
+        <option value="deadline" ${groupBy==='deadline'?'selected':''}>按截止分群</option>
+      </select>` : ''}
       <button class="btn-primary" onclick="openProjectModal()"><i data-lucide="plus" class="w-4 h-4"></i>新增</button>
     </div>
 
-    <div class="text-xs text-ink-500 mono">共 ${total} 個項目，<span class="text-amber-glow">${active}</span> 個進行中</div>
+    <div class="text-xs text-ink-500 mono">共 ${total} 個項目，<span class="text-amber-glow">${active}</span> 個進行中 ${groupBy!=='none'?'· 已按 <span class="text-neon-cyan">'+({status:'狀態', client:'業主', type:'類型', payment:'付款', deadline:'截止'}[groupBy])+'</span> 分群':''}</div>
 
     ${projectsView==='kanban' ? kanbanView() : projectsView==='list' ? listView() : galleryView()}
   </div>`;
 }
 
 function switchProjectsView(v){ projectsView = v; render(); }
+
+function setListGroupBy(v){
+  state.listGroupBy = v === 'none' ? null : v;
+  saveState();
+  render();
+}
 
 function filteredProjects(){
   const q = ($('#projectSearch')?.value || '').toLowerCase();
@@ -940,42 +988,186 @@ function projectCard(p){
   </div>`;
 }
 
+/* ---------- Column Picker ---------- */
+function getColumnDefs(){
+  // migrate / ensure state.tableColumns exists
+  if (!Array.isArray(state.tableColumns) || state.tableColumns.length===0){
+    state.tableColumns = DEFAULT_TABLE_COLS.slice();
+    saveState();
+  }
+  // filter out unknown keys + ensure at least 'title' is always visible
+  const valid = state.tableColumns.filter(k => COLUMN_DEFS.find(c=>c.key===k));
+  if (!valid.includes('title')) valid.unshift('title');
+  state.tableColumns = valid;
+  return valid.map(k=>COLUMN_DEFS.find(c=>c.key===k)).filter(Boolean);
+}
+
+function openColumnPicker(){
+  const m = document.getElementById('columnPickerModal');
+  m.classList.remove('hidden'); m.classList.add('flex');
+  renderColumnPicker();
+}
+function closeColumnPicker(){
+  const m = document.getElementById('columnPickerModal');
+  m.classList.add('hidden'); m.classList.remove('flex');
+  render(); // re-render list view with new columns
+}
+function toggleColumn(key, on){
+  if (on){
+    if (!state.tableColumns.includes(key)) state.tableColumns.push(key);
+  } else {
+    if (key === 'title'){ toast('「項目」不能關閉，至少要留一個欄位'); return; }
+    state.tableColumns = state.tableColumns.filter(k=>k!==key);
+  }
+  saveState();
+  renderColumnPicker();
+}
+function moveColumn(key, dir){
+  const idx = state.tableColumns.indexOf(key);
+  if (idx < 0) return;
+  const newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= state.tableColumns.length) return;
+  state.tableColumns.splice(idx, 1);
+  state.tableColumns.splice(newIdx, 0, key);
+  saveState();
+  renderColumnPicker();
+}
+function resetColumns(){
+  state.tableColumns = DEFAULT_TABLE_COLS.slice();
+  saveState();
+  renderColumnPicker();
+}
+function renderColumnPicker(){
+  const body = document.getElementById('columnPickerBody');
+  // show ALL columns in current order, but with selected ones first then unselected
+  const visible = state.tableColumns.map(k=>COLUMN_DEFS.find(c=>c.key===k)).filter(Boolean);
+  const hidden = COLUMN_DEFS.filter(c=>!state.tableColumns.includes(c.key));
+  const all = [...visible, ...hidden];
+  body.innerHTML = all.map(col => {
+    const visibleIdx = state.tableColumns.indexOf(col.key);
+    const isVisible = visibleIdx !== -1;
+    const canUp = isVisible && visibleIdx > 0;
+    const canDown = isVisible && visibleIdx < state.tableColumns.length - 1;
+    return `
+    <div class="flex items-center gap-2 p-2.5 rounded-lg border ${isVisible?'border-ink-600 bg-ink-800/60':'border-ink-700 opacity-60'}">
+      <input type="checkbox" ${isVisible?'checked':''} onchange="toggleColumn('${col.key}', this.checked)" class="w-4 h-4 accent-amber-glow shrink-0 cursor-pointer" />
+      <div class="flex-1 text-sm font-medium ${isVisible?'text-white':''}">${col.label}</div>
+      ${isVisible ? `
+        <button class="w-7 h-7 flex items-center justify-center rounded border border-ink-700 hover:border-amber-glow hover:text-amber-glow text-ink-500 ${canUp?'':'opacity-30 pointer-events-none'}" onclick="moveColumn('${col.key}', -1)" aria-label="up"><i data-lucide="chevron-up" class="w-3.5 h-3.5"></i></button>
+        <button class="w-7 h-7 flex items-center justify-center rounded border border-ink-700 hover:border-amber-glow hover:text-amber-glow text-ink-500 ${canDown?'':'opacity-30 pointer-events-none'}" onclick="moveColumn('${col.key}', 1)" aria-label="down"><i data-lucide="chevron-down" class="w-3.5 h-3.5"></i></button>
+      ` : '<div class="w-16"></div>'}
+    </div>`;
+  }).join('');
+  lucide.createIcons();
+}
+
+function renderProjectRow(p, cols){
+  const c = state.clients.find(x=>x.id===p.clientId);
+  const d = daysLeft(p.deadline);
+  return `<tr class="border-t border-ink-700 hover:bg-ink-800/70 cursor-pointer transition" onclick="openProjectModal('${p.id}')">
+    ${cols.map(col=>{
+      switch(col.key){
+        case 'title': return `<td class="p-3"><div class="flex items-center gap-3"><div class="cover-thumb w-14 shrink-0">${p.cover?`<img src="${esc(p.cover)}"/>`:`<i data-lucide="film" class="w-3 h-3 text-ink-500"></i>`}</div><div class="font-semibold">${esc(p.title)}</div></div></td>`;
+        case 'client': return `<td class="p-3" style="color:#cfcfd8">${esc(c?.name||'—')}</td>`;
+        case 'status': return `<td class="p-3"><span class="status-pill" style="color:${STATUS_META[p.status].color};background:${STATUS_META[p.status].bg};">${STATUS_META[p.status].label}</span></td>`;
+        case 'type': return `<td class="p-3 text-ink-500">${esc(p.type||'—')}</td>`;
+        case 'amount': return `<td class="p-3 text-right mono text-amber-glow whitespace-nowrap">${fmt(p.amount)}</td>`;
+        case 'payment': return `<td class="p-3"><span style="color:${PAY_META[p.payment]?.color}">${PAY_META[p.payment]?.label||'—'}</span></td>`;
+        case 'deadline': return `<td class="p-3 mono whitespace-nowrap ${d!==null&&d<0&&p.status!=='done'?'text-red-400':d!==null&&d<=2?'text-amber-glow':'text-ink-500'}">${d===null?'—':d<0?`逾期 ${-d}d`:d===0?'今日':`剩${d}d`}</td>`;
+        case 'revisions': return `<td class="p-3 mono text-ink-500 whitespace-nowrap">${p.usedRev||0}/${p.revisions||0}</td>`;
+        case 'tags': return `<td class="p-3"><div class="flex flex-wrap gap-1">${(p.tags||[]).map(t=>`<span class="tag" style="color:#ffaa7a;border-color:rgba(255,170,122,0.3)">${esc(t)}</span>`).join('')||'—'}</div></td>`;
+      }
+      return '';
+    }).join('')}
+    <td class="p-3 text-ink-500"><i data-lucide="chevron-right" class="w-4 h-4"></i></td>
+  </tr>`;
+}
+
+function renderGroupHeader(label, count, accent){
+  return `<tr class="group-header-row" style="background:linear-gradient(90deg, ${accent}22 0%, transparent 100%);">
+    <td colspan="20" class="px-4 py-2.5 border-y border-ink-600">
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full" style="background:${accent};box-shadow:0 0 8px ${accent}"></span>
+        <span class="display text-base tracking-wider" style="color:${accent}">${esc(label)}</span>
+        <span class="text-[10px] mono px-1.5 py-0.5 rounded" style="background:${accent}33;color:${accent}">${count}</span>
+      </div>
+    </td>
+  </tr>`;
+}
+
+function getGroupKey(p, by){
+  if (by==='none') return null;
+  if (by==='status'){
+    const m = STATUS_META[p.status];
+    return { key: p.status, label: m?.label||'其他', accent: m?.color||'#888899', order: Object.keys(STATUS_META).indexOf(p.status) };
+  }
+  if (by==='client'){
+    const c = state.clients.find(x=>x.id===p.clientId);
+    return { key: c?.id||'_none', label: c?.name||'未指定業主', accent:'#00d4ff', order: 99 };
+  }
+  if (by==='type'){
+    return { key: p.type||'未分類', label: p.type||'未分類', accent:'#a3ff12', order: 99 };
+  }
+  if (by==='payment'){
+    const m = PAY_META[p.payment];
+    return { key: p.payment, label: m?.label||'其他', accent: m?.color||'#888899', order: Object.keys(PAY_META).indexOf(p.payment) };
+  }
+  if (by==='deadline'){
+    const d = daysLeft(p.deadline);
+    if (d===null) return { key:'noDate', label:'無截止日', accent:'#5d5d72', order: 99 };
+    if (d<0) return { key:'overdue', label:'⚠ 已逾期', accent:'#ff5722', order: 0 };
+    if (d===0) return { key:'today', label:'今天到期', accent:'#ff2bd6', order: 1 };
+    if (d<=2) return { key:'urgent', label:'即將到期 (≤2天)', accent:'#fbbf24', order: 2 };
+    if (d<=7) return { key:'soon', label:'本週到期 (≤7天)', accent:'#00d4ff', order: 3 };
+    return { key:'later', label:'未來', accent:'#5d5d72', order: 4 };
+  }
+  return null;
+}
+
 function listView(){
+  const cols = getColumnDefs();
   const ps = filteredProjects();
   if (!ps.length) return emptyState('暫無項目');
-  return `<div class="card overflow-hidden">
+  const minWidth = cols.length * 130 + 60;
+  const groupBy = state.listGroupBy || 'none';
+
+  let body, groupCount = 0;
+  if (groupBy === 'none'){
+    body = ps.map(p=>renderProjectRow(p, cols)).join('');
+  } else {
+    // Group + sort
+    const groups = {};
+    ps.forEach(p=>{
+      const g = getGroupKey(p, groupBy);
+      if (!g) return;
+      if (!groups[g.key]) groups[g.key] = { meta:g, items:[] };
+      groups[g.key].items.push(p);
+    });
+    groupCount = Object.keys(groups).length;
+    const sortedGroups = Object.values(groups).sort((a,b)=> (a.meta.order??99)-(b.meta.order??99) || a.meta.label.localeCompare(b.meta.label,'zh-TW'));
+    body = sortedGroups.map(g=>{
+      const head = renderGroupHeader(g.meta.label, g.items.length, g.meta.accent);
+      const rows = g.items.map(p=>renderProjectRow(p, cols)).join('');
+      return head + rows;
+    }).join('');
+  }
+
+  const summary = `${cols.length} / ${COLUMN_DEFS.length} 個欄位` + (groupCount>0 ? ` · ${groupCount} 個分群` : '');
+
+  return `<div class="flex items-center gap-2 mb-2 flex-wrap">
+    <div class="text-xs text-ink-500 mono">${summary}</div>
+    <button class="btn-ghost text-xs ml-auto" onclick="openColumnPicker()"><i data-lucide="columns-3" class="w-3.5 h-3.5"></i>欄位設定</button>
+  </div>
+  <div class="card overflow-hidden">
     <div class="overflow-x-auto scroll-thin">
-    <table class="w-full text-sm min-w-[640px]">
+    <table class="w-full text-sm" style="min-width:${minWidth}px">
       <thead class="bg-ink-800 text-ink-500 text-[11px] mono tracking-widest">
         <tr>
-          <th class="text-left p-3">項目</th>
-          <th class="text-left p-3">業主</th>
-          <th class="text-left p-3">狀態</th>
-          <th class="text-left p-3">類型</th>
-          <th class="text-right p-3">金額</th>
-          <th class="text-left p-3">付款</th>
-          <th class="text-left p-3">截止</th>
-          <th class="text-left p-3">修改</th>
+          ${cols.map(col=>`<th class="${col.align==='right'?'text-right':'text-left'} p-3 whitespace-nowrap">${col.label}</th>`).join('')}
           <th></th>
         </tr>
       </thead>
-      <tbody>
-        ${ps.map(p=>{
-          const c = state.clients.find(x=>x.id===p.clientId);
-          const d = daysLeft(p.deadline);
-          return `<tr class="border-t border-ink-700 hover:bg-ink-800 cursor-pointer" onclick="openProjectModal('${p.id}')">
-            <td class="p-3"><div class="flex items-center gap-3"><div class="cover-thumb w-14 shrink-0">${p.cover?`<img src="${esc(p.cover)}"/>`:`<i data-lucide="film" class="w-3 h-3 text-ink-500"></i>`}</div><div class="font-semibold">${esc(p.title)}</div></div></td>
-            <td class="p-3 text-ink-500">${esc(c?.name||'—')}</td>
-            <td class="p-3"><span class="status-pill" style="color:${STATUS_META[p.status].color};background:${STATUS_META[p.status].bg};">${STATUS_META[p.status].label}</span></td>
-            <td class="p-3 text-ink-500">${esc(p.type||'—')}</td>
-            <td class="p-3 text-right mono text-amber-glow">${fmt(p.amount)}</td>
-            <td class="p-3"><span style="color:${PAY_META[p.payment]?.color}">${PAY_META[p.payment]?.label||'—'}</span></td>
-            <td class="p-3 mono ${d!==null&&d<0&&p.status!=='done'?'text-red-400':d!==null&&d<=2?'text-amber-glow':'text-ink-500'}">${d===null?'—':d<0?`逾期 ${-d}d`:d===0?'今日':`剩${d}d`}</td>
-            <td class="p-3 mono text-ink-500">${p.usedRev||0}/${p.revisions||0}</td>
-            <td class="p-3 text-ink-500"><i data-lucide="chevron-right" class="w-4 h-4"></i></td>
-          </tr>`;
-        }).join('')}
-      </tbody>
+      <tbody>${body}</tbody>
     </table>
     </div>
   </div>`;
