@@ -134,17 +134,89 @@
   ::selection{ background:rgba(255,87,34,0.4); color:#fff; }
   .drag-over{ border-color:#00d4ff !important; background:rgba(0,212,255,0.05) !important; }
   [contenteditable=true]:focus{ outline:none; }
+
+  /* ============== MOBILE / RESPONSIVE ============== */
+  #hamBtn{ display:none; }
+  .drawer-overlay{ display:none; }
+
+  @media (max-width: 1023px){
+    aside.sidebar{
+      position:fixed !important; left:-280px; top:0; height:100vh; z-index:60;
+      transition:left .3s cubic-bezier(.4,0,.2,1);
+      width:280px !important;
+    }
+    aside.sidebar.open{ left:0; box-shadow:0 0 80px rgba(255,87,34,0.15); }
+    .drawer-overlay.show{ display:block; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:55; backdrop-filter:blur(2px); }
+    #hamBtn{ display:flex; }
+    main{ margin-left:0 !important; }
+  }
+
+  @media (max-width: 767px){
+    .modal-card-mobile{ max-width:100% !important; max-height:100vh !important; height:calc(100vh - env(safe-area-inset-top)) !important; border-radius:0 !important; width:100% !important; margin-top:0 !important; }
+    .modal-card-mobile .modal-grid{ grid-template-columns:1fr !important; }
+    .desktop-only{ display:none !important; }
+    .hero-title{ font-size:1.75rem !important; }
+  }
+
+  @media (max-width: 640px){
+    .calendar-day{ min-height:46px; padding:3px; gap:1px; }
+    .calendar-day .mono{ font-size:11px; }
+    .calendar-deadline, .calendar-paid{ font-size:9px; padding:1px 3px; }
+  }
+
+  @media (max-width: 1023px){
+    .kanban-scroll{
+      display:flex; overflow-x:auto; gap:12px; padding-bottom:8px;
+      scroll-snap-type: x mandatory; -webkit-overflow-scrolling:touch;
+    }
+    .kanban-scroll > .kanban-col{
+      min-width:280px; max-width:320px; flex-shrink:0;
+      scroll-snap-align: start;
+    }
+  }
+
+  @media (hover: none){
+    .card-hover:active{ transform:scale(0.98); }
+  }
+
+  @media (max-width: 767px){
+    .btn-primary, .btn-ghost{ min-height:42px; padding-top:10px; padding-bottom:10px; }
+    .input{ font-size:16px !important; min-height:42px; }  /* 16px prevents iOS zoom */
+    .nav-item{ min-height:48px; }
+    .topbar-title-text{ font-size:1rem !important; line-height:1.2 !important; }
+  }
+
+  .safe-bottom{ padding-bottom:env(safe-area-inset-bottom); }
+  .safe-top{ padding-top:env(safe-area-inset-top); }
+
+  /* Compact main padding on mobile */
+  @media (max-width: 767px){
+    main > div.p-6{ padding:0.75rem !important; }
+  }
+
+  /* Mobile nav close button */
+  #drawerClose{ display:none; }
+  @media (max-width: 1023px){
+    #drawerClose{ display:flex; }
+  }
 </style>
 </head>
 <body class="min-h-screen overflow-x-hidden">
 
 <div class="film-grain"></div>
 
+<!-- Mobile drawer overlay -->
+<div class="drawer-overlay" id="drawerOverlay" onclick="toggleDrawer(false)"></div>
+
 <!-- ============== APP SHELL ============== -->
 <div class="flex min-h-screen">
 
   <!-- ========== SIDEBAR ========== -->
-  <aside class="w-64 shrink-0 border-r border-ink-700 bg-ink-900/80 backdrop-blur sticky top-0 h-screen flex flex-col">
+  <aside class="sidebar w-64 shrink-0 border-r border-ink-700 bg-ink-900/80 backdrop-blur sticky top-0 h-screen flex flex-col">
+    <!-- Mobile close button -->
+    <button id="drawerClose" onclick="toggleDrawer(false)" class="absolute top-4 right-4 w-9 h-9 items-center justify-center rounded-lg bg-ink-800 border border-ink-700 text-ink-500 hover:text-white hover:border-amber-glow z-10">
+      <i data-lucide="x" class="w-4 h-4"></i>
+    </button>
     <!-- Logo -->
     <div class="px-5 py-5 border-b border-ink-700">
       <div class="flex items-center gap-3">
@@ -219,34 +291,37 @@
   <main class="flex-1 min-w-0">
 
     <!-- Topbar -->
-    <header class="sticky top-0 z-30 bg-ink-900/80 backdrop-blur border-b border-ink-700">
-      <div class="flex items-center px-6 py-3 gap-4">
-        <div class="flex-1">
-          <div class="mono text-[10px] text-ink-500 tracking-widest" id="routeCrumb">/ DASHBOARD</div>
-          <h1 class="display text-2xl text-white leading-tight" id="routeTitle">儀表板</h1>
+    <header class="sticky top-0 z-30 bg-ink-900/80 backdrop-blur border-b border-ink-700 safe-top">
+      <div class="flex items-center px-4 md:px-6 py-3 gap-2 md:gap-4">
+        <button id="hamBtn" onclick="toggleDrawer(true)" aria-label="menu" class="w-10 h-10 flex items-center justify-center rounded-lg bg-ink-800 border border-ink-700 text-white hover:border-amber-glow shrink-0">
+          <i data-lucide="menu" class="w-5 h-5"></i>
+        </button>
+        <div class="flex-1 min-w-0">
+          <div class="mono text-[10px] text-ink-500 tracking-widest truncate" id="routeCrumb">/ DASHBOARD</div>
+          <h1 class="display text-xl md:text-2xl text-white leading-tight truncate topbar-title-text" id="routeTitle">儀表板</h1>
         </div>
         <div class="hidden md:flex items-center gap-2 text-xs text-ink-500 mono">
           <i data-lucide="calendar" class="w-3.5 h-3.5"></i>
           <span id="todayDate"></span>
         </div>
-        <button class="btn-ghost" onclick="openProjectModal()">
-          <i data-lucide="plus" class="w-4 h-4"></i>新增項目
+        <button class="hidden sm:inline-flex btn-ghost" onclick="openProjectModal()">
+          <i data-lucide="plus" class="w-4 h-4"></i><span class="hidden md:inline">新增項目</span>
         </button>
-        <button class="btn-primary" onclick="openProjectModal()">
-          <i data-lucide="plus-circle" class="w-4 h-4"></i>新建影片
+        <button class="btn-primary !px-3 md:!px-4 shrink-0" onclick="openProjectModal()">
+          <i data-lucide="plus-circle" class="w-4 h-4"></i><span class="hidden md:inline">新建影片</span>
         </button>
       </div>
     </header>
 
     <!-- ROUTE CONTAINER -->
-    <div class="p-6" id="routeContainer"></div>
+    <div class="p-4 md:p-6" id="routeContainer"></div>
 
   </main>
 </div>
 
 <!-- ============== MODAL: PROJECT ============== -->
-<div id="projectModal" class="fixed inset-0 z-50 hidden items-center justify-center modal-back p-4">
-  <div class="card w-full max-w-3xl max-h-[90vh] overflow-y-auto scroll-thin reveal">
+<div id="projectModal" class="fixed inset-0 z-50 hidden items-center justify-center modal-back p-0 md:p-4">
+  <div class="card modal-card-mobile w-full max-w-3xl max-h-[90vh] overflow-y-auto scroll-thin reveal">
     <div class="p-5 border-b border-ink-700 flex items-center justify-between">
       <div>
         <div class="display text-xl text-white" id="modalTitle">新建影片項目</div>
@@ -368,8 +443,8 @@
 </div>
 
 <!-- ============== MODAL: CLIENT ============== -->
-<div id="clientModal" class="fixed inset-0 z-50 hidden items-center justify-center modal-back p-4">
-  <div class="card w-full max-w-lg reveal">
+<div id="clientModal" class="fixed inset-0 z-50 hidden items-center justify-center modal-back p-0 md:p-4">
+  <div class="card modal-card-mobile w-full max-w-lg reveal">
     <div class="p-5 border-b border-ink-700 flex items-center justify-between">
       <div class="display text-xl text-white" id="clientModalTitle">新增業主</div>
       <button onclick="closeClientModal()" class="text-ink-500 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
@@ -396,8 +471,8 @@
 </div>
 
 <!-- ============== MODAL: PROFILE ============== -->
-<div id="profileModal" class="fixed inset-0 z-50 hidden items-center justify-center modal-back p-4">
-  <div class="card w-full max-w-md reveal">
+<div id="profileModal" class="fixed inset-0 z-50 hidden items-center justify-center modal-back p-0 md:p-4">
+  <div class="card modal-card-mobile w-full max-w-md reveal">
     <div class="p-5 border-b border-ink-700 flex items-center justify-between">
       <div class="display text-xl text-white">編輯個人資料</div>
       <button onclick="closeProfile()" class="text-ink-500 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
@@ -550,6 +625,18 @@ function toast(msg){
 const ROUTES = ['dashboard','projects','clients','schedule','finance','assets','logs','settings'];
 let currentRoute = 'dashboard';
 
+/* ---------- Mobile drawer ---------- */
+function toggleDrawer(show){
+  const sidebar = document.querySelector('aside.sidebar');
+  const overlay = document.getElementById('drawerOverlay');
+  if (show === undefined){
+    show = !sidebar.classList.contains('open');
+  }
+  sidebar.classList.toggle('open', show);
+  overlay.classList.toggle('show', show);
+  document.body.style.overflow = show ? 'hidden' : '';
+}
+
 function setRoute(r){
   if (!ROUTES.includes(r)) r='dashboard';
   currentRoute = r;
@@ -558,6 +645,10 @@ function setRoute(r){
   $('#routeTitle').textContent = titles[r];
   $('#routeCrumb').textContent = '/ ' + titles[r].toUpperCase();
   render();
+  // close mobile drawer when navigating
+  if (window.innerWidth < 1024) toggleDrawer(false);
+  // scroll to top
+  window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
 /* ---------- Render dispatcher ---------- */
@@ -609,7 +700,7 @@ function viewDashboard(){
       <div class="relative flex items-center justify-between gap-6 flex-wrap">
         <div>
           <div class="mono text-[11px] text-neon-cyan tracking-widest mb-2">// HELLO ${esc(state.profile.name||'剪輯師')}</div>
-          <div class="display text-4xl md:text-5xl gradient-text leading-none mb-3">READY, ROLL, ACTION.</div>
+          <div class="display text-4xl md:text-5xl gradient-text leading-none mb-3 hero-title">READY, ROLL, ACTION.</div>
           <div class="text-base font-medium" style="color:#cfcfd8">今天有 <span class="text-amber-glow font-bold">${active.length}</span> 個項目在跑，<span class="text-neon-cyan font-bold">${due7.length}</span> 個將在 7 天內到期。</div>
         </div>
         <div class="flex gap-2">
@@ -806,7 +897,7 @@ function filteredProjects(){
 
 function kanbanView(){
   const cols = ['draft','shooting','editing','review','revision','final','done'];
-  return `<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7 gap-3">
+  return `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7 gap-3 kanban-scroll">
     ${cols.map(s=>{
       const ps = filteredProjects().filter(p=>p.status===s);
       return `<div class="kanban-col" data-col="${s}" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="dropProject(event,'${s}');this.classList.remove('drag-over')">
@@ -853,7 +944,8 @@ function listView(){
   const ps = filteredProjects();
   if (!ps.length) return emptyState('暫無項目');
   return `<div class="card overflow-hidden">
-    <table class="w-full text-sm">
+    <div class="overflow-x-auto scroll-thin">
+    <table class="w-full text-sm min-w-[640px]">
       <thead class="bg-ink-800 text-ink-500 text-[11px] mono tracking-widest">
         <tr>
           <th class="text-left p-3">項目</th>
@@ -885,6 +977,7 @@ function listView(){
         }).join('')}
       </tbody>
     </table>
+    </div>
   </div>`;
 }
 
@@ -1097,9 +1190,10 @@ function viewFinance(){
       </div>
     </div>
 
-    <div class="card p-5">
+    <div class="card p-4 md:p-5">
       <div class="display text-lg mb-3">款項追蹤</div>
-      <table class="w-full text-sm">
+      <div class="overflow-x-auto scroll-thin">
+      <table class="w-full text-sm min-w-[600px]">
         <thead class="text-ink-500 text-[11px] mono tracking-widest border-b border-ink-700">
           <tr>
             <th class="text-left p-2">項目</th>
@@ -1126,6 +1220,7 @@ function viewFinance(){
           }).join('')}
         </tbody>
       </table>
+      </div>
     </div>
   </div>`;
 }
