@@ -351,6 +351,10 @@
         </select>
       </div>
       <div>
+        <label class="label">影片秒數</label>
+        <input class="input mono" type="number" id="f_durationSeconds" min="0" step="1" placeholder="例：60" />
+      </div>
+      <div>
         <label class="label">影片規格</label>
         <select class="input" id="f_spec">
           <option>9:16 直式 / 1080×1920</option><option>16:9 橫式 / 1920×1080</option>
@@ -553,11 +557,13 @@ const DEFAULT_CHECKLIST = [
 ];
 
 /* ---------- Table Column Definitions ---------- */
+const TABLE_COLUMN_VERSION = 2;
 const COLUMN_DEFS = [
   { key:'title',     label:'項目',  defaultOn:true,  align:'left' },
   { key:'client',    label:'業主',  defaultOn:true,  align:'left' },
   { key:'status',    label:'狀態',  defaultOn:true,  align:'left' },
   { key:'type',      label:'類型',  defaultOn:true,  align:'left' },
+  { key:'durationSeconds', label:'影片秒數', defaultOn:true, align:'left' },
   { key:'amount',    label:'金額',  defaultOn:true,  align:'right' },
   { key:'payment',   label:'付款',  defaultOn:true,  align:'left' },
   { key:'deadline',  label:'截止',  defaultOn:true,  align:'left' },
@@ -654,6 +660,19 @@ const fmt = (n) => 'NT$ ' + Number(n||0).toLocaleString('zh-TW');
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString('zh-TW',{month:'2-digit',day:'2-digit'}) : '—';
 const daysLeft = (s) => { if(!s) return null; const d = Math.ceil((new Date(s)-new Date())/86400000); return d; };
 const esc = (s) => String(s??'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function normalizeDurationSeconds(value){
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const number = Number(text);
+  if (!Number.isFinite(number)) return null;
+  return Math.max(0, Math.round(number));
+}
+
+function formatDurationSeconds(value){
+  const seconds = normalizeDurationSeconds(value);
+  return seconds === null ? '—' : `${seconds} 秒`;
+}
 
 function toast(msg){
   const t = $('#toast'); $('#toastMsg').textContent = msg;
@@ -1025,7 +1044,24 @@ function projectCard(p){
 }
 
 /* ---------- Column Picker ---------- */
+function migrateTableColumns(){
+  if ((state.tableColumnVersion || 1) >= TABLE_COLUMN_VERSION) return;
+  const columns = Array.isArray(state.tableColumns)
+    ? state.tableColumns
+    : DEFAULT_TABLE_COLS.slice();
+
+  if (!columns.includes('durationSeconds')){
+    const typeIndex = columns.indexOf('type');
+    columns.splice(typeIndex >= 0 ? typeIndex + 1 : columns.length, 0, 'durationSeconds');
+  }
+
+  state.tableColumns = columns;
+  state.tableColumnVersion = TABLE_COLUMN_VERSION;
+  saveState({ skipSync: true });
+}
+
 function getColumnDefs(){
+  migrateTableColumns();
   // migrate / ensure state.tableColumns exists
   if (!Array.isArray(state.tableColumns) || state.tableColumns.length===0){
     state.tableColumns = DEFAULT_TABLE_COLS.slice();
@@ -1107,6 +1143,7 @@ function renderProjectRow(p, cols){
         case 'client': return `<td class="p-3" style="color:#cfcfd8">${esc(c?.name||'—')}</td>`;
         case 'status': return `<td class="p-3"><span class="status-pill" style="color:${STATUS_META[p.status].color};background:${STATUS_META[p.status].bg};">${STATUS_META[p.status].label}</span></td>`;
         case 'type': return `<td class="p-3 text-ink-500">${esc(p.type||'—')}</td>`;
+        case 'durationSeconds': return `<td class="p-3 mono text-ink-500 whitespace-nowrap">${formatDurationSeconds(p.durationSeconds)}</td>`;
         case 'amount': return `<td class="p-3 text-right mono text-amber-glow whitespace-nowrap">${fmt(p.amount)}</td>`;
         case 'payment': return `<td class="p-3"><span style="color:${PAY_META[p.payment]?.color}">${PAY_META[p.payment]?.label||'—'}</span></td>`;
         case 'deadline': return `<td class="p-3 mono whitespace-nowrap ${d!==null&&d<0&&p.status!=='done'?'text-red-400':d!==null&&d<=2?'text-amber-glow':'text-ink-500'}">${d===null?'—':d<0?`逾期 ${-d}d`:d===0?'今日':`剩${d}d`}</td>`;
@@ -1863,6 +1900,7 @@ function openProjectModal(id){
     $('#f_title').value = p.title||'';
     $('#f_client').value = p.clientId||'';
     $('#f_type').value = p.type||'口播短影音';
+    $('#f_durationSeconds').value = p.durationSeconds ?? '';
     $('#f_spec').value = p.spec||'9:16 直式 / 1080×1920';
     $('#f_fps').value = p.fps||'30fps 標準';
     $('#f_amount').value = p.amount||0;
@@ -1880,7 +1918,7 @@ function openProjectModal(id){
   } else {
     $('#modalTitle').textContent = '新建影片項目';
     $('#modalPid').textContent = 'AUTO';
-    ['f_title','f_amount','f_deadline','f_cover','f_cloud','f_tags','f_notes'].forEach(i=> $('#'+i).value='');
+    ['f_title','f_amount','f_durationSeconds','f_deadline','f_cover','f_cloud','f_tags','f_notes'].forEach(i=> $('#'+i).value='');
     $('#f_status').value='draft'; $('#f_payment').value='unpaid';
     $('#f_revisions').value=2; $('#f_usedRev').value=0;
     $('#f_type').value='口播短影音'; $('#f_spec').value='9:16 直式 / 1080×1920'; $('#f_fps').value='30fps 標準';
@@ -1902,6 +1940,7 @@ function saveProject(){
     title: $('#f_title').value.trim(),
     clientId: $('#f_client').value,
     type: $('#f_type').value, spec: $('#f_spec').value, fps: $('#f_fps').value,
+    durationSeconds: normalizeDurationSeconds($('#f_durationSeconds').value),
     amount: +$('#f_amount').value || 0,
     deadline: $('#f_deadline').value,
     status: $('#f_status').value, payment: $('#f_payment').value,
