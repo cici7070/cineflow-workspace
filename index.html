@@ -304,6 +304,10 @@
           <i data-lucide="calendar" class="w-3.5 h-3.5"></i>
           <span id="todayDate"></span>
         </div>
+        <button id="syncIndicator" onclick="setRoute('settings')" class="hidden sm:inline-flex items-center gap-1.5 text-xs mono px-2 py-1 rounded border border-ink-700 hover:border-neon-cyan transition" title="點此開啟同步設定" style="color:#9ca3af">
+          <i data-lucide="cloud-off" id="syncIcon" class="w-3.5 h-3.5"></i>
+          <span id="syncIndicatorText">未設定</span>
+        </button>
         <button class="hidden sm:inline-flex btn-ghost" onclick="openProjectModal()">
           <i data-lucide="plus" class="w-4 h-4"></i><span class="hidden md:inline">新增項目</span>
         </button>
@@ -637,7 +641,11 @@ function cid(){ return 'c' + Math.random().toString(36).slice(2,9); }
 function loadState(){
   try { const s = localStorage.getItem('cineflow:v1'); return s ? JSON.parse(s) : null; } catch { return null; }
 }
-function saveState(){ localStorage.setItem('cineflow:v1', JSON.stringify(state)); refreshBadges(); }
+function saveState({ skipSync = false } = {}){
+  localStorage.setItem('cineflow:v1', JSON.stringify(state));
+  refreshBadges();
+  if (!skipSync && typeof syncAuto === 'function') syncAuto();
+}
 
 /* ---------- Utils ---------- */
 const $ = (sel, root=document) => root.querySelector(sel);
@@ -887,10 +895,9 @@ function renderDashCharts(){
    VIEW: PROJECTS (Kanban + List)
    ============================================================ */
 let projectsView = 'kanban';
+let projectSearchQuery = '';
+let projectStatusFilter = 'all';
 function viewProjects(){
-  const ps = state.projects;
-  const total = ps.length;
-  const active = ps.filter(p=>!['done'].includes(p.status)).length;
   const groupBy = state.listGroupBy || 'none';
   return `
   <div class="reveal space-y-4">
@@ -901,10 +908,10 @@ function viewProjects(){
         <button class="btn-ghost ${projectsView==='gallery'?'!border-amber-glow !text-amber-glow':''}" onclick="switchProjectsView('gallery')"><i data-lucide="layout-grid" class="w-4 h-4"></i>封面流</button>
       </div>
       <div class="flex-1"></div>
-      <input class="input max-w-xs" id="projectSearch" placeholder="搜尋標題、客戶、標籤…" oninput="render()" />
-      <select class="input max-w-[160px]" id="projectFilter" onchange="render()">
-        <option value="all">全部狀態</option>
-        ${Object.entries(STATUS_META).map(([k,v])=>`<option value="${k}">${v.label}</option>`).join('')}
+      <input class="input max-w-xs" id="projectSearch" value="${esc(projectSearchQuery)}" placeholder="搜尋標題、客戶、標籤…" oninput="setProjectSearch(this.value)" />
+      <select class="input max-w-[160px]" id="projectFilter" onchange="setProjectStatusFilter(this.value)">
+        <option value="all" ${projectStatusFilter==='all'?'selected':''}>全部狀態</option>
+        ${Object.entries(STATUS_META).map(([k,v])=>`<option value="${k}" ${projectStatusFilter===k?'selected':''}>${v.label}</option>`).join('')}
       </select>
       ${projectsView==='list' ? `
       <select class="input max-w-[160px]" id="projectGroupBy" onchange="setListGroupBy(this.value)" title="分群">
@@ -918,13 +925,42 @@ function viewProjects(){
       <button class="btn-primary" onclick="openProjectModal()"><i data-lucide="plus" class="w-4 h-4"></i>新增</button>
     </div>
 
-    <div class="text-xs text-ink-500 mono">共 ${total} 個項目，<span class="text-amber-glow">${active}</span> 個進行中 ${groupBy!=='none'?'· 已按 <span class="text-neon-cyan">'+({status:'狀態', client:'業主', type:'類型', payment:'付款', deadline:'截止'}[groupBy])+'</span> 分群':''}</div>
-
-    ${projectsView==='kanban' ? kanbanView() : projectsView==='list' ? listView() : galleryView()}
+    <div id="projectResults">
+      ${projectResultsView()}
+    </div>
   </div>`;
 }
 
+function projectResultsView(){
+  const total = state.projects.length;
+  const active = state.projects.filter(p=>!['done'].includes(p.status)).length;
+  const groupBy = state.listGroupBy || 'none';
+  return `
+    <div class="text-xs text-ink-500 mono">共 ${total} 個項目，<span class="text-amber-glow">${active}</span> 個進行中 ${groupBy!=='none'?'· 已按 <span class="text-neon-cyan">'+({status:'狀態', client:'業主', type:'類型', payment:'付款', deadline:'截止'}[groupBy])+'</span> 分群':''}</div>
+
+    <div class="mt-4">
+      ${projectsView==='kanban' ? kanbanView() : projectsView==='list' ? listView() : galleryView()}
+    </div>`;
+}
+
 function switchProjectsView(v){ projectsView = v; render(); }
+
+function renderProjectResults(){
+  const container = $('#projectResults');
+  if (!container) return;
+  container.innerHTML = projectResultsView();
+  lucide.createIcons();
+}
+
+function setProjectSearch(value){
+  projectSearchQuery = value;
+  renderProjectResults();
+}
+
+function setProjectStatusFilter(value){
+  projectStatusFilter = value || 'all';
+  renderProjectResults();
+}
 
 function setListGroupBy(v){
   state.listGroupBy = v === 'none' ? null : v;
@@ -933,8 +969,8 @@ function setListGroupBy(v){
 }
 
 function filteredProjects(){
-  const q = ($('#projectSearch')?.value || '').toLowerCase();
-  const f = $('#projectFilter')?.value || 'all';
+  const q = projectSearchQuery.trim().toLowerCase();
+  const f = projectStatusFilter;
   return state.projects.filter(p=>{
     if (f!=='all' && p.status!==f) return false;
     if (!q) return true;
@@ -1543,7 +1579,39 @@ function viewLogs(){
    VIEW: SETTINGS
    ============================================================ */
 function viewSettings(){
+  const sync = state.sync || {};
+  const isConfigured = !!(sync.token && sync.gistId);
   return `<div class="reveal space-y-4 max-w-2xl">
+    <div class="card p-5">
+      <div class="display text-xl mb-3 flex items-center gap-2"><i data-lucide="cloud" class="w-5 h-5 text-neon-cyan"></i>雲端同步（GitHub Gist）</div>
+      <div class="text-sm text-ink-500 mb-3 leading-relaxed">把你的工作台資料推到一個私人 Gist，多裝置開啟會自動同步。Token 與 Gist ID 只存在你的瀏覽器。</div>
+      <div class="space-y-3">
+        <div>
+          <label class="label">Personal Access Token</label>
+          <input type="password" class="input mono" id="sync_token" value="${esc(sync.token||'')}" placeholder="github_pat_..." autocomplete="off" oninput="saveSyncConfig()" />
+          <div class="text-xs text-ink-500 mt-1.5 leading-relaxed">到 <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener" class="text-neon-cyan underline">GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens</a> 建立 Token，在 <b>Account permissions</b> 加入 <b>Gists</b>，Access 設為 <b>Read and write</b>。Token 只會保存在這台裝置，不會上傳到 Gist。</div>
+        </div>
+        <div>
+          <label class="label">Gist ID</label>
+          <div class="flex gap-2">
+            <input class="input flex-1 mono" id="sync_gistId" value="${esc(sync.gistId||'')}" placeholder="留空，按右邊按鈕自動建立" oninput="saveSyncConfig()" />
+            <button class="btn-ghost" onclick="syncCreateGist()"><i data-lucide="plus" class="w-4 h-4"></i>建立新 Gist</button>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <button class="btn-primary" onclick="syncPush()" ${isConfigured?'':'disabled style="opacity:0.4;pointer-events:none"'}><i data-lucide="upload-cloud" class="w-4 h-4"></i>推送到雲端</button>
+          <button class="btn-ghost" onclick="syncPull()" ${isConfigured?'':'disabled style="opacity:0.4;pointer-events:none"'}><i data-lucide="download-cloud" class="w-4 h-4"></i>從雲端拉取</button>
+          <label class="flex items-center gap-2 text-sm ml-auto">
+            <input type="checkbox" id="sync_auto" ${sync.autoSync!==false?'checked':''} onchange="state.sync.autoSync=this.checked; saveState()" class="w-4 h-4 accent-amber-glow" />
+            <span>變更後自動推送（建議）</span>
+          </label>
+        </div>
+        <div id="syncStatus" class="text-xs mono p-3 rounded border border-ink-700 bg-ink-800/50" style="color:#9ca3af">
+          ${isConfigured ? `已設定 Gist · 上次同步：${sync.lastSyncAt?timeAgo(sync.lastSyncAt):'尚未'}` : '尚未設定'}
+        </div>
+      </div>
+    </div>
+
     <div class="card p-5">
       <div class="display text-xl mb-3">個人資料</div>
       <div class="space-y-3">
@@ -1571,7 +1639,7 @@ function viewSettings(){
 
     <div class="card p-5">
       <div class="display text-xl mb-2">關於 CINEFLOW</div>
-      <div class="text-sm text-ink-500 leading-relaxed">專為自由剪輯師設計的單機工作台。所有資料存於你的瀏覽器 LocalStorage，建議定期匯出 JSON 備份。鍵盤快捷鍵：<span class="mono text-neon-cyan">N</span> 新建項目、<span class="mono text-neon-cyan">/</span> 搜尋（點搜尋框）。</div>
+      <div class="text-sm text-ink-500 leading-relaxed">專為自由剪輯師設計的工作台。資料存於瀏覽器 LocalStorage；啟用雲端同步後會推到私人 GitHub Gist。鍵盤快捷鍵：<span class="mono text-neon-cyan">N</span> 新建項目、<span class="mono text-neon-cyan">/</span> 搜尋。</div>
     </div>
   </div>`;
 }
@@ -1583,6 +1651,194 @@ function saveSettings(){
   state.profile.rate = +$('#s_rate').value || 0;
   saveState(); refreshUserChip(); toast('已儲存');
 }
+
+/* ============================================================
+   GITHUB GIST SYNC
+   ============================================================ */
+function saveSyncConfig(){
+  if (!state.sync) state.sync = { token:'', gistId:'', autoSync:true, lastSyncAt:null };
+  state.sync.token = ($('#sync_token')?.value || '').trim();
+  state.sync.gistId = ($('#sync_gistId')?.value || '').trim();
+  saveState({ skipSync: true });
+  setSyncStatus();
+}
+
+function setSyncStatus(msg, kind){
+  const el = document.getElementById('syncStatus');
+  if (el){
+    if (msg){
+      el.textContent = msg;
+      el.style.color = kind==='error' ? '#ff5722' : kind==='success' ? '#a3ff12' : '#00d4ff';
+    } else {
+      const sync = state.sync || {};
+      const isConfigured = !!(sync.token && sync.gistId);
+      if (!isConfigured){
+        el.textContent = '尚未設定';
+        el.style.color = '#9ca3af';
+      } else {
+        el.textContent = `已設定 Gist · 上次同步：${sync.lastSyncAt ? timeAgo(sync.lastSyncAt) : '尚未'}`;
+        el.style.color = '#a3ff12';
+      }
+    }
+  }
+  // also update topbar indicator
+  updateTopbarSync();
+}
+
+function updateTopbarSync(){
+  const ind = document.getElementById('syncIndicator');
+  const txt = document.getElementById('syncIndicatorText');
+  const ico = document.getElementById('syncIcon');
+  if (!ind || !txt || !ico) return;
+  const sync = state.sync || {};
+  const isConfigured = !!(sync.token && sync.gistId);
+  if (!isConfigured){
+    txt.textContent = '未同步';
+    ico.setAttribute('data-lucide','cloud-off');
+    ind.style.color = '#9ca3af';
+    ind.style.borderColor = '#22222f';
+  } else {
+    txt.textContent = sync.lastSyncAt ? `已同步 ${timeAgo(sync.lastSyncAt)}` : '已連線';
+    ico.setAttribute('data-lucide', sync.lastSyncAt ? 'cloud-check' : 'cloud');
+    ind.style.color = '#a3ff12';
+    ind.style.borderColor = 'rgba(163,255,18,0.3)';
+  }
+  lucide.createIcons();
+}
+
+async function ghFetch(path, opts={}){
+  const token = state.sync?.token;
+  if (!token) throw new Error('請先填 GitHub Token');
+  const r = await fetch('https://api.github.com'+path, {
+    ...opts,
+    headers: {
+      'Authorization':'Bearer '+token,
+      'Accept':'application/vnd.github+json',
+      'X-GitHub-Api-Version':'2022-11-28',
+      ...(opts.headers||{})
+    }
+  });
+  if (!r.ok){
+    const txt = await r.text().catch(()=>'');
+    let errMsg = `HTTP ${r.status}`;
+    try { errMsg = (JSON.parse(txt)).message || errMsg; } catch{}
+    throw new Error(errMsg);
+  }
+  return r.json();
+}
+
+async function syncCreateGist(){
+  saveSyncConfig();
+  if (!state.sync.token){ toast('請先填 Token'); return; }
+  if (_syncInProgress) return;
+  _syncInProgress = true;
+  try {
+    setSyncStatus('建立中…');
+    const data = await ghFetch('/gists', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        description:'CINEFLOW workspace sync',
+        public:false,
+        files:{ 'cineflow.json':{ content: JSON.stringify(_serializeState(), null, 2) } }
+      })
+    });
+    state.sync.gistId = data.id;
+    state.sync.lastSyncAt = new Date().toISOString();
+    saveState({ skipSync: true });
+    const gid = data.id;
+    document.getElementById('sync_gistId').value = gid;
+    setSyncStatus('已建立 Gist：'+gid, 'success');
+    toast('Gist 已建立');
+    render(); // refresh disabled states
+  } catch(e){
+    setSyncStatus('建立失敗：'+e.message, 'error');
+    toast('建立失敗');
+  } finally {
+    _syncInProgress = false;
+  }
+}
+
+async function syncPush(){
+  saveSyncConfig();
+  if (!state.sync.gistId){ toast('請先建立或填入 Gist ID'); return; }
+  if (_syncInProgress) return;
+  _syncInProgress = true;
+  try {
+    setSyncStatus('推送中…');
+    await ghFetch('/gists/'+state.sync.gistId, {
+      method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ files:{ 'cineflow.json':{ content: JSON.stringify(_serializeState(), null, 2) } } })
+    });
+    state.sync.lastSyncAt = new Date().toISOString();
+    saveState({ skipSync: true });
+    setSyncStatus('已推送 · '+timeAgo(state.sync.lastSyncAt), 'success');
+    toast('已推到雲端');
+  } catch(e){
+    setSyncStatus('推送失敗：'+e.message, 'error');
+    toast('推送失敗');
+  } finally {
+    _syncInProgress = false;
+  }
+}
+
+async function syncPull(){
+  saveSyncConfig();
+  if (!state.sync.gistId){ toast('請先填入 Gist ID'); return; }
+  if (_syncInProgress) return;
+  _syncInProgress = true;
+  try {
+    setSyncStatus('拉取中…');
+    const data = await ghFetch('/gists/'+state.sync.gistId);
+    const content = data.files?.['cineflow.json']?.content;
+    if (!content) throw new Error('Gist 找不到 cineflow.json');
+    const remote = JSON.parse(content);
+    const confirmed = confirm('將以遠端資料覆蓋本地未同步的變更，確定嗎？');
+    if (!confirmed){ setSyncStatus('已取消'); return; }
+    const localSync = { ...state.sync };
+    state = remote;
+    state.sync = localSync;
+    state.sync.lastSyncAt = new Date().toISOString();
+    saveState({ skipSync: true });
+    render();
+    setSyncStatus('已拉取並套用 · '+timeAgo(state.sync.lastSyncAt), 'success');
+    toast('已從雲端拉取');
+  } catch(e){
+    setSyncStatus('拉取失敗：'+e.message, 'error');
+    toast('拉取失敗');
+  } finally {
+    _syncInProgress = false;
+  }
+}
+
+function serializeStateForCloud(sourceState){
+  const safeState = JSON.parse(JSON.stringify(sourceState));
+  if (safeState.sync) delete safeState.sync.token;
+  return safeState;
+}
+
+function _serializeState(){
+  return serializeStateForCloud(state);
+}
+
+// Hook into saveState - already wired inside saveState() definition
+let _syncDebounce = null;
+let _syncInProgress = false;
+function syncAuto(){
+  if (_syncInProgress) return;
+  if (!state.sync || state.sync.autoSync === false) return;
+  if (!state.sync.token || !state.sync.gistId) return;
+  clearTimeout(_syncDebounce);
+  _syncDebounce = setTimeout(()=>{
+    syncPush().catch(()=>{});
+  }, 1500);
+}
+
+// On window focus, refresh sync status indicator if on settings page
+window.addEventListener('focus', ()=>{
+  if (currentRoute === 'settings') setSyncStatus();
+});
 
 /* ============================================================
    MODAL: PROJECT
@@ -1802,7 +2058,7 @@ function refreshUserChip(){
    IMPORT / EXPORT
    ============================================================ */
 function exportData(){
-  const blob = new Blob([JSON.stringify(state, null, 2)], { type:'application/json' });
+  const blob = new Blob([JSON.stringify(_serializeState(), null, 2)], { type:'application/json;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = `cineflow-backup-${new Date().toISOString().slice(0,10)}.json`;
@@ -1851,6 +2107,7 @@ function init(){
   refreshBadges();
   refreshUserChip();
   updateTodayDate();
+  updateTopbarSync();
   setInterval(updateLiveTimecode, 41);
   setRoute('dashboard');
 
@@ -1859,7 +2116,7 @@ function init(){
     if (e.target.tagName==='INPUT' || e.target.tagName==='TEXTAREA' || e.target.tagName==='SELECT') return;
     if (e.key==='n' || e.key==='N'){ openProjectModal(); }
     if (e.key==='/'){ e.preventDefault(); const i=document.getElementById('projectSearch'); if(i){ i.focus(); setRoute('projects'); } }
-    if (e.key==='Escape'){ closeProjectModal(); closeClientModal(); closeProfile(); }
+    if (e.key==='Escape'){ closeProjectModal(); closeClientModal(); closeProfile(); closeColumnPicker(); }
     if (e.key>='1' && e.key<='8'){ const r=['dashboard','projects','clients','schedule','finance','assets','logs','settings'][+e.key-1]; setRoute(r); }
   });
 }
